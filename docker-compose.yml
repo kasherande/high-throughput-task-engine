@@ -1,0 +1,46 @@
+services:
+  web:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/workspace/app
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=mysql+pymysql://user:password@db:3306/task_db
+    depends_on:
+      - redis
+      - db
+
+  worker:
+    build: .
+    command: celery -A app.celery_worker.celery_app worker --loglevel=info
+    volumes:
+      - ./app:/workspace/app
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=mysql+pymysql://user:password@db:3306/task_db
+    depends_on:
+      - redis
+      - db
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: task_db
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
