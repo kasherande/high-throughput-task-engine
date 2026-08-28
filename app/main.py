@@ -1,23 +1,36 @@
 import time
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
+import redis
+
 from app.core.database import Base, engine, get_db
 from app.models.task import TaskLog, TaskStatus
 from app.celery_worker import process_heavy_task
 
 app = FastAPI(title="High-Throughput Task Engine")
 
-# Wait for MySQL to finish initializing
+redis_client = redis.Redis(host="redis", port=6379, db=0)
+
+def rate_limiter(request: Request):
+    client_ip = request.client.host
+    key = f"rate_limit:{client_ip}"
+    
+    current_requests = redis_client.incr(key)
+    if current_requests == 1:
+        redis_client.expire(key, 10)  # 10-second window
+        
+    if current_requests > 5:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait.")
+
 for i in range(15):
     try:
         Base.metadata.create_all(bind=engine)
         print("Successfully connected to MySQL!")
         break
-    except Exception as e:
-        print(f"Waiting for database connection... ({i+1}/15)")
+    except Exception:
         time.sleep(2)
 
-@app.post("/tasks/enqueue")
+@app.post("/tasks/enqueue", dependencies=[Depends(rate_limiter)])
 def enqueue_task(payload: str, db: Session = Depends(get_db)):
     task_job = process_heavy_task.delay(payload)
     new_task = TaskLog(task_id=task_job.id, payload=payload, status=TaskStatus.PENDING)
